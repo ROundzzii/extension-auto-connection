@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>AutoConnexion</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>AutoConnexion</h1>
+    <label class="switch" title="Activer / désactiver partout">
+      <input type="checkbox" id="global">
+      <span></span>
+    </label>
+  </header>
+
+  <div id="banner" class="banner" hidden>
+    <span>Enregistrement en cours dans un onglet.</span>
+    <button id="cancel-rec" class="link">Annuler</button>
+  </div>
+
+  <main>
+    <ul id="list"></ul>
+    <p id="empty" class="empty" hidden>
+      Aucune connexion enregistrée.<br>
+      Va sur la page de connexion d’un site, puis clique sur le bouton ci-dessous.
+    </p>
+  </main>
+
+  <footer>
+    <button id="record" class="primary">＋ Enregistrer une connexion</button>
+    <p id="hint" class="hint"></p>
+    <p id="last" class="last" hidden></p>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

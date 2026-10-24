@@ -1,4 +1,4 @@
-importScripts('shared.js');
+if (typeof importScripts === 'function') importScripts('shared.js'); // Firefox charge shared.js via le manifeste
 
 const SCRIPT_ID = 'autoconnexion';
 
@@ -40,4 +40,25 @@ chrome.permissions.onAdded.addListener(sync);
 chrome.permissions.onRemoved.addListener(sync);
 chrome.storage.onChanged.addListener((ch, area) => {
   if (area === 'local' && (ch.rules || ch.recording)) prune();
+});
+
+// Raccourci clavier : relance la connexion sur l'onglet actif (réglable dans la page Réglages).
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== 'run-login') return;
+  const { settings = {} } = await chrome.storage.local.get('settings');
+  if (settings.shortcutEnabled === false) return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  const run = () => chrome.tabs.sendMessage(tab.id, { type: 'run' });
+  try {
+    await run();
+  } catch {
+    // Pas encore injecté : le raccourci donne un accès temporaire à l'onglet, on s'en sert.
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+      await run();
+    } catch {
+      /* page non injectable (chrome://, store…) */
+    }
+  }
 });

@@ -155,13 +155,16 @@ function ruleItem(rule, rules, hasAccess) {
   details.open = openIds.has(rule.id);
   details.addEventListener('toggle', () => (details.open ? openIds.add(rule.id) : openIds.delete(rule.id)));
 
+  const icon = el('img', { src: faviconUrl(rule.startUrl), alt: '' });
+  icon.addEventListener('error', () => icon.remove()); // Firefox n'a pas l'API de favicons
+
   return el(
     'li',
     { class: on ? '' : 'off' },
     el(
       'div',
       { class: 'top' },
-      el('img', { src: faviconUrl(rule.startUrl), alt: '' }),
+      icon,
       el('div', { class: 'info' }, name, el('div', { class: 'sub' }, host)),
       hasAccess ? el('div', { class: 'actions' }, test, open, del) : el('div', { class: 'actions' }, authorize, del),
       el('label', { class: 'switch', title: 'Activer pour ce site' }, toggle, el('span'))
@@ -198,6 +201,11 @@ $('#continue').addEventListener('click', async () => {
 
 $('#backup').addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('backup/backup.html') });
+  window.close();
+});
+
+$('#settings').addEventListener('click', () => {
+  chrome.runtime.openOptionsPage();
   window.close();
 });
 

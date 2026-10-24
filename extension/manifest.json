@@ -1,11 +1,21 @@
 {
   "manifest_version": 3,
   "name": "AutoConnexion",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Se connecte automatiquement à tes sites : rejoue les clics enregistrés pendant que Bitwarden remplit les identifiants.",
-  "permissions": ["storage", "activeTab", "favicon", "scripting"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "background": { "service_worker": "background.js" },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "favicon",
+    "scripting"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "AutoConnexion",
@@ -19,5 +29,18 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "commands": {
+    "run-login": {
+      "suggested_key": {
+        "default": "Alt+Shift+L",
+        "mac": "Alt+Shift+L"
+      },
+      "description": "Lancer la connexion sur cette page"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
   }
 }

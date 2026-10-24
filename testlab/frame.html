@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Labo · iframe</title><link rel="stylesheet" href="lab.css"></head>
+<body><h1>Connexion dans une iframe</h1><p class="v">Le formulaire ci-dessous est une page à part, intégrée dans celle-ci.</p>
+<iframe id="login-frame" width="440" height="380" style="border:1px solid #c8c8d4;border-radius:8px"></iframe>
+<script>document.getElementById('login-frame').src = 'frame-inner.html' + location.search;</script></body></html>

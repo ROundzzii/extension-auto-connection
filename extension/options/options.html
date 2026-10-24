@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Réglages · AutoConnexion</title>
+  <link rel="stylesheet" href="../popup/popup.css">
+  <link rel="stylesheet" href="../backup/backup.css">
+</head>
+<body>
+  <h1>Réglages</h1>
+  <p class="intro">Les changements sont enregistrés automatiquement.</p>
+
+  <section>
+    <h2>Raccourci clavier</h2>
+    <p>Relance la connexion sur l’onglet actif, sans ouvrir le popup. Utile quand la page est déjà chargée.</p>
+    <div class="line">
+      <label class="switch"><input type="checkbox" id="shortcut-on"><span></span></label>
+      <span>Activer le raccourci</span>
+    </div>
+    <div class="line">
+      <span>Raccourci actuel :</span>
+      <kbd id="shortcut-key">…</kbd>
+      <button id="shortcut-edit" class="link">Modifier</button>
+    </div>
+    <p class="note" id="shortcut-note"></p>
+  </section>
+
+  <section>
+    <h2>Raccourci personnalisé</h2>
+    <p>
+      Chrome refuse certaines combinaisons dans sa page de raccourcis. Celui-ci est géré par
+      l’extension : tu peux choisir presque n’importe quelle combinaison. Il ne marche que dans une page
+      de site (pas dans la barre d’adresse), et pas pour les combinaisons que le navigateur se réserve
+      (⌘T, ⌘W…).
+    </p>
+    <div class="line">
+      <label class="switch"><input type="checkbox" id="custom-on"><span></span></label>
+      <span>Activer le raccourci personnalisé</span>
+    </div>
+    <div class="line">
+      <span>Combinaison :</span>
+      <kbd id="custom-key">Non défini</kbd>
+      <button id="custom-edit" class="link">Définir</button>
+      <button id="custom-clear" class="link" hidden>Effacer</button>
+    </div>
+    <p class="note" id="custom-note"></p>
+  </section>
+
+  <script src="options.js"></script>
+</body>
+</html>

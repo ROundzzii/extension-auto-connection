@@ -28,3 +28,5 @@ function neededOrigins(rules) {
 // Même logique que le content script : www ignoré, slash final ignoré.
 const sameSite = (a, b) => a.replace('//www.', '//') === b.replace('//www.', '//');
 const normPath = (pathname) => pathname.replace(/\/+$/, '') || '/';
+
+if (typeof module !== 'undefined') module.exports = { altHost, originsFor, neededOrigins, sameSite, normPath };

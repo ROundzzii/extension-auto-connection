@@ -1,5 +1,4 @@
 const $ = (s) => document.querySelector(s);
-const STEP_TYPES = ['click', 'fill', 'check', 'enter'];
 
 function say(text, isError = false) {
   const m = $('#msg');
@@ -12,48 +11,6 @@ async function refreshCount() {
   const { rules = [] } = await chrome.storage.local.get('rules');
   $('#count').textContent = `${rules.length} connexion${rules.length > 1 ? 's' : ''} à exporter.`;
   $('#export').disabled = !rules.length;
-}
-
-// Le fichier importé n'est pas fiable : on reconstruit chaque champ attendu, rien d'autre.
-const isStr = (v, max) => typeof v === 'string' && v.length <= max;
-
-function cleanStep(s) {
-  if (!s || typeof s !== 'object' || !STEP_TYPES.includes(s.type)) return null;
-  if (!isStr(s.origin, 300) || !/^https?:\/\/[^/\s]+$/.test(s.origin)) return null;
-  if (!isStr(s.path, 500) || !s.path.startsWith('/')) return null;
-  const t = s.target;
-  if (!t || !isStr(t.css, 1000) || !isStr(t.tag, 30) || (t.text !== undefined && !isStr(t.text, 100))) return null;
-  const step = {
-    origin: s.origin,
-    path: s.path,
-    type: s.type,
-    target: { css: t.css, tag: t.tag, text: t.text || '' },
-    label: isStr(s.label, 200) && s.label ? s.label : 'Étape',
-  };
-  if (s.type === 'check') step.checked = !!s.checked;
-  return step;
-}
-
-function cleanRule(r) {
-  if (!r || typeof r !== 'object' || !Array.isArray(r.steps) || r.steps.length === 0 || r.steps.length > 100) return null;
-  let start;
-  try {
-    const u = new URL(r.startUrl);
-    if (!/^https?:$/.test(u.protocol)) return null;
-    start = u.href;
-  } catch {
-    return null;
-  }
-  const steps = r.steps.map(cleanStep);
-  if (steps.includes(null)) return null;
-  return {
-    id: isStr(r.id, 60) && r.id ? r.id : crypto.randomUUID(),
-    name: isStr(r.name, 80) && r.name.trim() ? r.name.trim() : new URL(start).hostname,
-    startUrl: start,
-    enabled: r.enabled !== false,
-    createdAt: Number(r.createdAt) || Date.now(),
-    steps,
-  };
 }
 
 $('#export').addEventListener('click', async () => {

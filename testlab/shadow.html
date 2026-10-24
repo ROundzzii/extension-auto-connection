@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Labo · shadow DOM</title><link rel="stylesheet" href="lab.css"></head>
+<body><h1>Connexion dans un shadow DOM</h1><lab-login></lab-login>
+<script src="lab.js"></script>
+<script>
+customElements.define('lab-login', class extends HTMLElement {
+  constructor() {
+    super();
+    const root = this.attachShadow({ mode: 'open' });
+    root.innerHTML = '<link rel="stylesheet" href="lab.css">';
+    const box = document.createElement('div');
+    root.append(box);
+    Lab.mount(box);
+  }
+});
+</script></body></html>

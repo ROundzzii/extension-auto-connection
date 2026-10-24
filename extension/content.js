@@ -37,17 +37,35 @@
   }
 
   // ---------- Sélecteurs ----------
+  // Une cible = un chemin (iframes, shadow DOM) + plusieurs repères pour retrouver l'élément.
+  // Si le repère principal casse (le site a changé), un repère de secours prend le relais
+  // et la cible est réparée automatiquement.
 
-  function pathSelector(el) {
+  const ATTRS = ['data-testid', 'data-test', 'data-qa', 'data-cy', 'name', 'aria-label', 'autocomplete', 'placeholder'];
+  const KEEP_ATTRS = ['id', 'name', 'type', 'aria-label', 'placeholder', 'data-testid', 'autocomplete', 'role'];
+
+  const q = (root, css) => {
+    try {
+      return [...root.querySelectorAll(css)];
+    } catch {
+      return []; // sélecteur invalide
+    }
+  };
+  const only = (list) => (list.length === 1 ? list[0] : null);
+  const labelOf = (el) => norm(el.labels?.[0]?.innerText || '').slice(0, 60);
+
+  // Sélecteur structurel (tags + positions), relatif au document ou au shadow root de l'élément.
+  // structural = true ignore les ids : c'est le repère de secours quand les ids ont changé.
+  function pathSelector(el, structural = false) {
     const parts = [];
     let n = el;
-    while (n && n.nodeType === 1 && n !== document.body && parts.length < 6) {
-      if (n.id && !UNSTABLE.test(n.id)) {
+    while (n && n.nodeType === 1 && n !== n.ownerDocument.body && parts.length < 6) {
+      if (!structural && n.id && !UNSTABLE.test(n.id)) {
         parts.unshift('#' + CSS.escape(n.id));
         break;
       }
       let part = n.localName;
-      const sib = [...n.parentElement.children].filter((c) => c.localName === n.localName);
+      const sib = [...n.parentNode.children].filter((c) => c.localName === n.localName);
       if (sib.length > 1) part += `:nth-of-type(${sib.indexOf(n) + 1})`;
       parts.unshift(part);
       n = n.parentElement;
@@ -55,41 +73,110 @@
     return parts.join(' > ');
   }
 
-  function buildTarget(el) {
+  function candidates(el) {
     const tag = el.localName;
-    const cands = [];
-    if (el.id && !UNSTABLE.test(el.id)) cands.push('#' + CSS.escape(el.id));
-    for (const a of ['data-testid', 'data-test', 'data-qa', 'data-cy', 'name', 'aria-label', 'autocomplete', 'placeholder']) {
+    const out = [];
+    if (el.id && !UNSTABLE.test(el.id)) out.push('#' + CSS.escape(el.id));
+    for (const a of ATTRS) {
       const v = el.getAttribute(a);
-      if (v && !UNSTABLE.test(v)) cands.push(`${tag}[${a}="${CSS.escape(v)}"]`);
+      if (v && !UNSTABLE.test(v)) out.push(`${tag}[${a}="${CSS.escape(v)}"]`);
     }
-    if (el.type) cands.push(`${tag}[type="${el.type}"]`);
-    let css = cands.find((c) => {
-      try {
-        const l = document.querySelectorAll(c);
-        return l.length === 1 && l[0] === el;
-      } catch {
-        return false;
-      }
-    });
-    if (!css) css = pathSelector(el);
-    const clickable = ['button', 'a', 'summary'].includes(tag) || el.getAttribute('role') === 'button' || el.type === 'submit';
-    return { css, tag, text: clickable ? textOf(el).slice(0, 60) : '' };
+    if (el.type) out.push(`${tag}[type="${el.type}"]`);
+    return out;
   }
 
-  function resolve(t) {
-    let list = [];
+  function selectorIn(el) {
+    const scope = el.getRootNode();
+    return candidates(el).find((c) => only(q(scope, c)) === el) || pathSelector(el);
+  }
+
+  // Chemin depuis la page jusqu'au document (iframe) ou shadow root qui contient l'élément.
+  function chainOf(el) {
+    const chain = [];
+    let n = el;
+    for (;;) {
+      const root = n.getRootNode();
+      if (root.nodeType === 11 && root.host) {
+        chain.unshift({ kind: 'shadow', css: selectorIn(root.host) });
+        n = root.host;
+      } else if (root.nodeType === 9 && root.defaultView && root.defaultView !== window && root.defaultView.frameElement) {
+        const frame = root.defaultView.frameElement;
+        chain.unshift({ kind: 'frame', css: selectorIn(frame) });
+        n = frame;
+      } else {
+        return chain;
+      }
+    }
+  }
+
+  function buildTarget(el) {
+    const tag = el.localName;
+    const clickable = ['button', 'a', 'summary'].includes(tag) || el.getAttribute('role') === 'button' || el.type === 'submit';
+    const attrs = {};
+    for (const a of KEEP_ATTRS) {
+      const v = el.getAttribute(a);
+      if (v && !UNSTABLE.test(v)) attrs[a] = v.slice(0, 80);
+    }
+    return {
+      css: selectorIn(el),
+      tag,
+      text: clickable ? textOf(el).slice(0, 60) : '',
+      label: labelOf(el),
+      attrs,
+      path: pathSelector(el, true),
+      chain: chainOf(el),
+    };
+  }
+
+  function rootFor(chain) {
+    let root = document;
+    for (const hop of chain || []) {
+      const host = root.querySelector(hop.css);
+      if (!host) return null;
+      root = hop.kind === 'shadow' ? host.shadowRoot : host.contentDocument; // null si fermé / autre domaine
+      if (!root) return null;
+    }
+    return root;
+  }
+
+  // Renvoie { el, via } : via = 'css' si le repère principal marche, sinon le repère de secours utilisé.
+  function locate(t) {
+    let root = null;
     try {
-      list = [...document.querySelectorAll(t.css)];
+      root = rootFor(t.chain);
     } catch {
       /* sélecteur invalide */
     }
-    if (list.length === 1) return list[0];
-    if (t.text) {
-      const hit = [...document.querySelectorAll(t.tag)].find((e) => textOf(e) === t.text && isVisible(e));
-      if (hit) return hit;
+    if (!root) return null;
+    const primary = q(root, t.css);
+    if (primary.length === 1) return { el: primary[0], via: 'css' };
+    const visible = (l) => l.filter(isVisible);
+    const tries = [
+      ['attributs', () => Object.entries(t.attrs || {}).map(([k, v]) => only(visible(q(root, `${t.tag}[${k}="${CSS.escape(v)}"]`)))).find(Boolean)],
+      ['texte', () => t.text && only(visible(q(root, t.tag).filter((e) => textOf(e) === t.text)))],
+      ['étiquette', () => t.label && only(visible(q(root, t.tag).filter((e) => labelOf(e) === t.label)))],
+      ['position', () => t.path && only(q(root, t.path))],
+    ];
+    for (const [via, fn] of tries) {
+      const el = fn();
+      if (el) return { el, via };
     }
-    return list.find(isVisible) || null;
+    const first = visible(primary)[0]; // dernier recours : sélecteur principal ambigu
+    return first ? { el: first, via: 'css' } : null;
+  }
+
+  // Position à l'écran, y compris pour un élément dans une iframe.
+  function absRect(el) {
+    const r = el.getBoundingClientRect();
+    let { left, top } = r;
+    let w = el.ownerDocument.defaultView;
+    while (w && w !== window && w.frameElement) {
+      const f = w.frameElement.getBoundingClientRect();
+      left += f.left;
+      top += f.top;
+      w = w.parent;
+    }
+    return { left, top, width: r.width, height: r.height };
   }
 
   function hint(el) {
@@ -208,23 +295,43 @@
     updateCount();
   }
 
+  // Tous les inputs de la page, y compris dans les shadow DOM et les iframes du même domaine.
+  function deepInputs(root = document, out = []) {
+    for (const el of root.querySelectorAll('*')) {
+      if (el.hasAttribute('data-ac-host')) continue; // notre propre interface
+      if (el.localName === 'input') out.push(el);
+      if (el.shadowRoot) deepInputs(el.shadowRoot, out);
+      if (el.localName === 'iframe' || el.localName === 'frame') {
+        try {
+          if (el.contentDocument) deepInputs(el.contentDocument, out);
+        } catch {
+          /* autre domaine : inaccessible */
+        }
+      }
+    }
+    return out;
+  }
+
   // Ajoute un « remplir » pour chaque champ déjà rempli (par Bitwarden ou à la main).
   // La valeur n'est jamais lue : on ne retient que le sélecteur.
   function flushFilled() {
-    for (const el of document.querySelectorAll('input')) {
+    for (const el of deepInputs()) {
       if (!isTextField(el) || !el.value || recordedFields.has(el) || !isVisible(el)) continue;
       recordedFields.add(el);
       addStep({ type: 'fill', target: buildTarget(el), label: `Attendre le champ « ${hint(el)} »` });
     }
   }
 
+  // Vrai si l'événement vient de notre propre interface (panneau, bulle).
+  const isOurs = (e) => e.composedPath().some((n) => n.nodeType === 1 && n.hasAttribute('data-ac-host'));
+
   function onClick(e) {
-    if (!rec || !e.isTrusted) return;
-    const t = e.target;
-    if (!(t instanceof Element) || t.closest('[data-ac-host]')) return;
+    if (!rec || !e.isTrusted || isOurs(e)) return;
+    const t = e.composedPath()[0]; // vraie cible, même dans un shadow DOM ouvert
+    if (!t || t.nodeType !== 1) return;
     const el = t.closest('button,a[href],input[type=submit],input[type=button],input[type=checkbox],input[type=radio],[role=button],[role=link],summary,label') || t;
     if (el.localName === 'label' && el.control) return; // le clic sur l'input suivra
-    if (isTextField(el) || ['textarea', 'select', 'body', 'html'].includes(el.localName)) return;
+    if (isTextField(el) || ['textarea', 'select', 'option', 'body', 'html'].includes(el.localName)) return;
     flushFilled();
     if (el.type === 'checkbox') {
       setTimeout(() => addStep({ type: 'check', checked: el.checked, target: buildTarget(el), label: `Case « ${hint(el)} » ${el.checked ? 'cochée' : 'décochée'}` }), 0);
@@ -234,11 +341,49 @@
   }
 
   function onKey(e) {
-    if (!rec || !e.isTrusted || e.key !== 'Enter') return;
-    const el = e.target;
-    if (!(el instanceof Element) || el.closest('[data-ac-host]') || !isTextField(el)) return;
+    if (!rec || !e.isTrusted || e.key !== 'Enter' || isOurs(e)) return;
+    const el = e.composedPath()[0];
+    if (!el || el.nodeType !== 1 || !isTextField(el)) return;
     flushFilled();
     addStep({ type: 'enter', target: buildTarget(el), label: `Valider avec Entrée dans « ${hint(el)} »` });
+  }
+
+  // Menu déroulant : l'événement « input » traverse les shadow DOM, pas « change ».
+  function onSelect(e) {
+    if (!rec || !e.isTrusted || isOurs(e)) return;
+    const el = e.composedPath()[0];
+    if (!el || el.localName !== 'select') return;
+    flushFilled();
+    const target = buildTarget(el);
+    const last = rec.steps[rec.steps.length - 1];
+    if (last?.type === 'select' && last.target.css === target.css) rec.steps.pop(); // il a changé d'avis
+    const text = el.selectedOptions[0]?.text.trim().slice(0, 80) || '';
+    addStep({ type: 'select', value: el.value, optText: text, target, label: `Choisir « ${text.slice(0, 40) || el.value} »` });
+  }
+
+  // Les iframes du même domaine ont leur propre document : on y branche aussi les écouteurs.
+  const hooked = new WeakSet();
+  function hookDoc(doc) {
+    if (hooked.has(doc)) return;
+    hooked.add(doc);
+    doc.addEventListener('click', onClick, true);
+    doc.addEventListener('keydown', onKey, true);
+    doc.addEventListener('input', onSelect, true);
+  }
+  function hookFrames(root = document) {
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) hookFrames(el.shadowRoot);
+      if (el.localName === 'iframe' || el.localName === 'frame') {
+        try {
+          if (el.contentDocument) {
+            hookDoc(el.contentDocument);
+            hookFrames(el.contentDocument);
+          }
+        } catch {
+          /* autre domaine : inaccessible */
+        }
+      }
+    }
   }
 
   async function finishRecording() {
@@ -280,13 +425,29 @@
     return null;
   }
 
+  // Remplace la cible d'une étape par une neuve, construite depuis l'élément réellement trouvé.
+  async function healStep(ruleId, step, el) {
+    try {
+      const { rules = [] } = await getAll();
+      const rule = rules.find((r) => r.id === ruleId);
+      const saved = rule?.steps.find((x) => x.origin === step.origin && x.path === step.path && x.type === step.type && x.target.css === step.target.css);
+      if (!saved) return;
+      saved.target = buildTarget(el);
+      await chrome.storage.local.set({ rules });
+    } catch {
+      /* extension rechargée */
+    }
+  }
+
   // Renvoie un court compte rendu, affiché dans le popup (« Dernière vérification »).
   async function runSteps(rule, steps, onEngaged) {
     const t = toast(`Connexion à ${rule.name}…`);
+    let healed = 0;
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
-      const el = await waitFor(() => resolve(step.target), i === 0 ? 5000 : 12000, () => t.cancelled);
+      const found = await waitFor(() => locate(step.target), i === 0 ? 5000 : 12000, () => t.cancelled);
       if (t.cancelled) return 'Annulé.';
+      const el = found?.el;
       if (!el) {
         // Premier élément absent : probablement déjà connecté, on reste discret.
         if (i === 0) {
@@ -297,6 +458,10 @@
         return `Échec : élément introuvable (${step.label}).`;
       }
       if (i === 0) onEngaged();
+      if (found.via !== 'css') {
+        healed++; // le repère principal a cassé : on met la cible à jour pour la prochaine fois
+        healStep(rule.id, step, el);
+      }
       if (step.type === 'fill') {
         if (!el.value) {
           t.set('En attente de Bitwarden… (déverrouille ton coffre si besoin)');
@@ -309,6 +474,17 @@
           t.set(`Connexion à ${rule.name}…`);
         }
         await sleep(250);
+      } else if (step.type === 'select') {
+        const findOpt = () => [...el.options].find((o) => o.value === step.value) || [...el.options].find((o) => norm(o.text) === norm(step.optText || ''));
+        const opt = await waitFor(findOpt, 8000, () => t.cancelled);
+        if (t.cancelled) return 'Annulé.';
+        if (!opt) {
+          t.end('err', `Option introuvable : ${step.optText}`, 7000);
+          return `Échec : option introuvable (${step.optText}).`;
+        }
+        el.value = opt.value;
+        el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
       } else if (step.type === 'check') {
         if (el.checked !== step.checked) el.click();
       } else if (step.type === 'enter') {
@@ -320,7 +496,8 @@
       await sleep(150);
     }
     t.end('ok', 'Connexion envoyée', 2500);
-    return `Connexion « ${rule.name} » lancée (${steps.length} étape${steps.length > 1 ? 's' : ''}).`;
+    const fixed = healed ? `, ${healed} réparée${healed > 1 ? 's' : ''} automatiquement` : '';
+    return `Connexion « ${rule.name} » lancée (${steps.length} étape${steps.length > 1 ? 's' : ''}${fixed}).`;
   }
 
   // « www.site.fr » et « site.fr » sont traités comme le même site.
@@ -336,17 +513,21 @@
     }
   }
 
-  async function maybeRun() {
+  // force = lancement manuel (raccourci clavier) : ignore l'anti-boucle et les interrupteurs.
+  async function maybeRun(force = false) {
     if (running) return;
     const { rules = [], enabled = true, recording } = await getAll();
     const mine = rules.filter((r) => r.steps.some((s) => sameSite(s.origin, location.origin)));
-    if (!mine.length) return; // site inconnu : on ne laisse aucune trace
+    if (!mine.length) {
+      if (force) toast('').end('err', 'Aucune connexion enregistrée pour ce site.', 3500);
+      return; // site inconnu : on ne laisse aucune trace
+    }
     if (rec || recording) return report('Un enregistrement est en cours : le rejeu est suspendu.');
-    if (enabled === false) return report('AutoConnexion est désactivé (interrupteur en haut du popup).');
+    if (enabled === false && !force) return report('AutoConnexion est désactivé (interrupteur en haut du popup).');
     const path = normPath();
     let why = `Aucune étape enregistrée pour la page ${path}.`;
     for (const rule of mine) {
-      if (rule.enabled === false) {
+      if (rule.enabled === false && !force) {
         why = `« ${rule.name} » est désactivé.`;
         continue;
       }
@@ -356,7 +537,7 @@
       // Le verrou ne se pose qu'une fois la première étape réellement trouvée.
       const key = `autoconnexion:${rule.id}:${path}`;
       try {
-        if (Date.now() - Number(sessionStorage.getItem(key) || 0) < GUARD_MS) {
+        if (!force && Date.now() - Number(sessionStorage.getItem(key) || 0) < GUARD_MS) {
           why = 'Ignoré par l’anti-boucle (déjà lancé il y a moins de 20 s).';
           continue;
         }
@@ -378,6 +559,7 @@
       }
     }
     report(why);
+    if (force) toast('').end('err', 'Aucune étape enregistrée pour cette page.', 3500);
   }
 
   // ---------- Test à blanc ----------
@@ -428,19 +610,21 @@
     );
     testUI = { panel, box };
 
-    let found = 0;
+    let ok = 0;
     for (const { s, ic, lbl } of rows) {
       if (testUI?.panel !== panel) return; // fermé ou relancé entre-temps
       ic.textContent = '…';
-      const el = resolve(s.target);
+      const found = locate(s.target);
+      const el = found?.el;
       if (el) {
         el.scrollIntoView({ block: 'center', behavior: 'smooth' });
         await sleep(450);
-        const r = el.getBoundingClientRect();
+        const r = absRect(el);
         Object.assign(hl.style, { left: `${r.left - 3}px`, top: `${r.top - 3}px`, width: `${r.width}px`, height: `${r.height}px` });
         hl.hidden = false;
-        ic.textContent = '✓';
-        found++;
+        ic.textContent = found.via === 'css' ? '✓' : '↻';
+        ok++;
+        if (found.via !== 'css') lbl.textContent += ` (repère de secours : ${found.via}, sera réparé)`;
         if (s.type === 'fill') lbl.textContent += el.value ? ' (déjà rempli)' : ' (vide pour l’instant)';
       } else {
         hl.hidden = true;
@@ -451,22 +635,24 @@
     }
     hl.hidden = true;
     summary.textContent =
-      found === rows.length
-        ? `Tout est trouvé (${found}/${rows.length}). La connexion devrait fonctionner.`
-        : `${found}/${rows.length} trouvées. Une étape introuvable peut n’apparaître qu’après un clic (fenêtre, menu) : lance une vraie connexion pour vérifier.`;
+      ok === rows.length
+        ? `Tout est trouvé (${ok}/${rows.length}). La connexion devrait fonctionner.`
+        : `${ok}/${rows.length} trouvées. Une étape introuvable peut n’apparaître qu’après un clic (fenêtre, menu) : lance une vraie connexion pour vérifier.`;
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === 'test') {
       testRule(msg.ruleId);
       sendResponse({ ok: true });
+    } else if (msg?.type === 'run') {
+      maybeRun(true);
+      sendResponse({ ok: true });
     }
   });
 
   // ---------- Démarrage ----------
 
-  document.addEventListener('click', onClick, true);
-  document.addEventListener('keydown', onKey, true);
+  hookDoc(document);
 
   chrome.storage.onChanged.addListener((ch, area) => {
     if (area !== 'local' || !ch.recording) return;
@@ -498,6 +684,7 @@
     // Sites en SPA : l'URL change sans rechargement.
     let last = location.href;
     setInterval(() => {
+      if (rec) hookFrames(); // une iframe a pu apparaître
       if (location.href !== last) {
         last = location.href;
         maybeRun();

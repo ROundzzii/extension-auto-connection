@@ -652,9 +652,32 @@
 
   // ---------- Démarrage ----------
 
+  // Raccourci personnalisé défini dans les Réglages (combinaison libre, active seulement si activée).
+  let custom = null;
+  async function loadCustom() {
+    try {
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      custom = settings.customEnabled && settings.custom ? settings.custom : null;
+    } catch {
+      /* extension rechargée */
+    }
+  }
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (!custom || rec || e.repeat || e.code !== custom.code) return;
+      if (e.ctrlKey !== custom.ctrl || e.altKey !== custom.alt || e.shiftKey !== custom.shift || e.metaKey !== custom.meta) return;
+      e.preventDefault();
+      maybeRun(true);
+    },
+    true
+  );
+  loadCustom();
+
   hookDoc(document);
 
   chrome.storage.onChanged.addListener((ch, area) => {
+    if (area === 'local' && ch.settings) loadCustom();
     if (area !== 'local' || !ch.recording) return;
     const v = ch.recording.newValue;
     if (v && v.tabId === myTabId) {

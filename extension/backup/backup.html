@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Sauvegarde · AutoConnexion</title>
+  <link rel="stylesheet" href="../popup/popup.css">
+  <link rel="stylesheet" href="backup.css">
+</head>
+<body>
+  <h1>Sauvegarde des connexions</h1>
+  <p class="intro">
+    Le fichier contient uniquement les étapes (sélecteurs, URL) : <strong>aucun mot de passe</strong>.
+    Il sert à retrouver tes connexions après une réinstallation ou sur un autre ordinateur.
+  </p>
+
+  <section>
+    <h2>Exporter</h2>
+    <p><span id="count"></span></p>
+    <button id="export" class="primary">Télécharger le fichier</button>
+  </section>
+
+  <section>
+    <h2>Importer</h2>
+    <p>Une connexion déjà présente pour la même page de départ est remplacée.</p>
+    <button id="import" class="primary">Choisir un fichier…</button>
+    <input type="file" id="file" accept="application/json,.json" hidden>
+  </section>
+
+  <p id="msg" class="msg" role="status" hidden></p>
+
+  <script src="backup.js"></script>
+</body>
+</html>

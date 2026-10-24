@@ -3,7 +3,8 @@
 // remplisse les champs, puis on continue les clics.
 (() => {
   'use strict';
-  if (window.top !== window) return;
+  if (window.top !== window || window.__autoConnexion) return; // évite la double injection
+  window.__autoConnexion = true;
 
   const UNSTABLE = /\d{4,}|[0-9a-f]{8,}|^:r|^ember|^react/i;
   const TEXT_TYPES = ['text', 'email', 'password', 'tel', 'number', 'search', 'url'];
@@ -170,7 +171,7 @@
     if (overlay) return;
     const { host, root } = shadowHost('top:16px;right:16px');
     const count = h('span', { class: 'count' });
-    const hintEl = h('div', { class: 'hint' }, 'Connecte-toi normalement : laisse Bitwarden remplir les champs, puis clique sur « Se connecter ».');
+    const hintEl = h('div', { class: 'hint' }, 'Connecte-toi normalement : laisse Bitwarden remplir les champs, puis clique sur « Se connecter ». Si le site te renvoie vers un autre domaine, rouvre l’icône de l’extension sur la nouvelle page.');
     const name = h('input', { type: 'text', 'aria-label': 'Nom de la connexion', value: rec.name || location.hostname });
     root.append(
       h(
@@ -378,6 +379,89 @@
     }
     report(why);
   }
+
+  // ---------- Test à blanc ----------
+  // Surligne chaque étape de la page courante sans rien cliquer ni remplir.
+
+  const TEST_CSS = `
+    .trow{display:flex;align-items:flex-start;gap:8px;font-size:12px}
+    .ic{width:14px;text-align:center;flex:none}
+    .hl{position:fixed;border:3px solid #5b5bf0;border-radius:6px;box-shadow:0 0 0 4px rgba(91,91,240,.25);pointer-events:none;transition:all .15s}
+  `;
+  let testUI = null;
+
+  function closeTest() {
+    testUI?.panel.remove();
+    testUI?.box.remove();
+    testUI = null;
+  }
+
+  async function testRule(ruleId) {
+    closeTest();
+    const { rules = [] } = await getAll();
+    const rule = rules.find((r) => r.id === ruleId);
+    if (!rule) return;
+    const steps = rule.steps.filter((s) => sameSite(s.origin, location.origin) && s.path === normPath());
+
+    const { host: panel, root } = shadowHost('top:16px;left:16px');
+    const { host: box, root: boxRoot } = shadowHost('top:0;left:0;pointer-events:none');
+    const hl = h('div', { class: 'hl' });
+    hl.hidden = true;
+    boxRoot.append(h('style', {}, TEST_CSS), hl);
+
+    const rows = steps.map((s) => {
+      const ic = h('span', { class: 'ic' }, '○');
+      const lbl = h('span', { class: 'msg' }, s.label);
+      return { s, ic, lbl, row: h('div', { class: 'trow' }, ic, lbl) };
+    });
+    const summary = h('div', { class: 'hint' }, 'Test en cours : rien n’est cliqué ni rempli.');
+    root.append(
+      h('style', {}, TEST_CSS),
+      h(
+        'div',
+        { class: 'card' },
+        h('strong', {}, `Test : ${rule.name}`),
+        ...rows.map((r) => r.row),
+        summary,
+        h('div', { class: 'row end' }, h('button', { class: 'ghost', onclick: () => testRule(ruleId) }, 'Relancer'), h('button', { class: 'primary', onclick: closeTest }, 'Fermer'))
+      )
+    );
+    testUI = { panel, box };
+
+    let found = 0;
+    for (const { s, ic, lbl } of rows) {
+      if (testUI?.panel !== panel) return; // fermé ou relancé entre-temps
+      ic.textContent = '…';
+      const el = resolve(s.target);
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        await sleep(450);
+        const r = el.getBoundingClientRect();
+        Object.assign(hl.style, { left: `${r.left - 3}px`, top: `${r.top - 3}px`, width: `${r.width}px`, height: `${r.height}px` });
+        hl.hidden = false;
+        ic.textContent = '✓';
+        found++;
+        if (s.type === 'fill') lbl.textContent += el.value ? ' (déjà rempli)' : ' (vide pour l’instant)';
+      } else {
+        hl.hidden = true;
+        ic.textContent = '⚠';
+        lbl.textContent += ' : introuvable';
+      }
+      await sleep(600);
+    }
+    hl.hidden = true;
+    summary.textContent =
+      found === rows.length
+        ? `Tout est trouvé (${found}/${rows.length}). La connexion devrait fonctionner.`
+        : `${found}/${rows.length} trouvées. Une étape introuvable peut n’apparaître qu’après un clic (fenêtre, menu) : lance une vraie connexion pour vérifier.`;
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type === 'test') {
+      testRule(msg.ruleId);
+      sendResponse({ ok: true });
+    }
+  });
 
   // ---------- Démarrage ----------
 

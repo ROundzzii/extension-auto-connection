@@ -1,5 +1,8 @@
 const $ = (s) => document.querySelector(s);
 
+let currentTab = null;
+const openIds = new Set(); // connexions dont le détail est déplié (conservé entre deux rendus)
+
 function faviconUrl(pageUrl) {
   const u = new URL(chrome.runtime.getURL('/_favicon/'));
   u.searchParams.set('pageUrl', pageUrl);
@@ -25,15 +28,21 @@ async function activeTab() {
 
 async function render() {
   const { rules = [], enabled = true, recording = null, runLog = [] } = await chrome.storage.local.get(['rules', 'enabled', 'recording', 'runLog']);
-  const tab = await activeTab();
-  const canRecord = /^https?:/.test(tab?.url || '');
+  currentTab = await activeTab();
+  const url = currentTab?.url || '';
+  const canRecord = /^https?:/.test(url);
+
+  // En cours d'enregistrement sur un nouveau domaine (SSO) : il faut l'autoriser pour continuer.
+  const hop =
+    !!recording && canRecord && recording.tabId === currentTab.id && !(await chrome.permissions.contains({ origins: originsFor(new URL(url).origin) }));
 
   $('#global').checked = enabled !== false;
   $('#banner').hidden = !recording;
+  $('#hop').hidden = !hop;
   $('#empty').hidden = rules.length > 0;
   $('#record').disabled = !canRecord || !!recording;
   $('#hint').textContent = canRecord
-    ? 'Astuce : déconnecte-toi du site avant d’enregistrer.'
+    ? 'Astuce : déconnecte-toi du site avant d’enregistrer. Chrome te demandera d’autoriser le site.'
     : 'Ouvre la page de connexion d’un site pour l’enregistrer.';
 
   const last = $('#last');
@@ -43,11 +52,11 @@ async function render() {
     ...runLog.map((r) => el('div', {}, `${new Date(r.at).toLocaleTimeString('fr-FR')} · ${new URL(r.url).pathname} : ${r.result}`))
   );
 
-  const list = $('#list');
-  list.replaceChildren(...rules.map((rule) => ruleItem(rule, rules)));
+  const granted = await Promise.all(rules.map((r) => chrome.permissions.contains({ origins: [...neededOrigins([r])] })));
+  $('#list').replaceChildren(...rules.map((rule, i) => ruleItem(rule, rules, granted[i])));
 }
 
-function ruleItem(rule, rules) {
+function ruleItem(rule, rules, hasAccess) {
   const host = new URL(rule.startUrl).hostname;
   const on = rule.enabled !== false;
 
@@ -78,8 +87,73 @@ function ruleItem(rule, rules) {
   const open = el('button', { class: 'icon', title: 'Ouvrir la page de connexion' }, '↗');
   open.addEventListener('click', () => chrome.tabs.create({ url: rule.startUrl }));
 
-  const steps = el('ol', {}, ...rule.steps.map((s) => el('li', { style: 'background:none;border:0;padding:0' }, s.label)));
+  // Le test se lance sur l'onglet actif, s'il montre une page de cette connexion.
+  let here = false;
+  try {
+    const u = new URL(currentTab.url);
+    here = rule.steps.some((s) => sameSite(s.origin, u.origin) && s.path === normPath(u.pathname));
+  } catch {
+    /* onglet sans URL lisible */
+  }
+  const test = el('button', { class: 'icon', title: here ? 'Tester sur cette page (rien n’est cliqué)' : 'Ouvre la page de connexion de ce site pour tester' }, '▶');
+  test.disabled = !here;
+  test.addEventListener('click', async () => {
+    try {
+      await chrome.tabs.sendMessage(currentTab.id, { type: 'test', ruleId: rule.id });
+      window.close();
+    } catch {
+      $('#hint').textContent = 'Test impossible : recharge la page puis réessaie.';
+    }
+  });
+
+  // Sans accès au site, rien ne se lance : le bouton doit être cliqué par l'utilisateur.
+  const origins = [...neededOrigins([rule])];
+  const authorize = el('button', { class: 'warn', title: 'Autoriser l’extension sur ce site' }, 'Autoriser');
+  authorize.addEventListener('click', async () => {
+    if (await chrome.permissions.request({ origins })) await chrome.runtime.sendMessage({ type: 'sync' });
+    render();
+  });
+
+  const save = () => chrome.storage.local.set({ rules });
+  const swap = (i, k) => {
+    [rule.steps[i], rule.steps[k]] = [rule.steps[k], rule.steps[i]];
+    save();
+  };
+  const stepBtn = (text, title, enabled, fn) => {
+    const b = el('button', { class: 'icon', title }, text);
+    b.disabled = !enabled;
+    b.addEventListener('click', fn);
+    return b;
+  };
   const n = rule.steps.length;
+  const steps = el(
+    'ol',
+    {},
+    ...rule.steps.map((s, i) =>
+      el(
+        'li',
+        { class: 'step' },
+        el('span', { class: 'lbl' }, s.label),
+        stepBtn('↑', 'Monter', i > 0, () => swap(i, i - 1)),
+        stepBtn('↓', 'Descendre', i < n - 1, () => swap(i, i + 1)),
+        stepBtn('✕', n > 1 ? 'Supprimer cette étape' : 'Supprime la connexion entière', n > 1, () => {
+          rule.steps.splice(i, 1);
+          save();
+        })
+      )
+    )
+  );
+
+  const name = el('input', { class: 'name', value: rule.name, 'aria-label': 'Nom de la connexion' });
+  name.addEventListener('change', () => {
+    rule.name = name.value.trim() || host;
+    save();
+  });
+  name.addEventListener('keydown', (e) => e.key === 'Enter' && name.blur());
+
+  const details = el('details', {}, el('summary', {}, `${n} étape${n > 1 ? 's' : ''}`), steps);
+  details.open = openIds.has(rule.id);
+  details.addEventListener('toggle', () => (details.open ? openIds.add(rule.id) : openIds.delete(rule.id)));
 
   return el(
     'li',
@@ -88,23 +162,42 @@ function ruleItem(rule, rules) {
       'div',
       { class: 'top' },
       el('img', { src: faviconUrl(rule.startUrl), alt: '' }),
-      el('div', { class: 'info' }, el('div', { class: 'name' }, rule.name), el('div', { class: 'sub' }, host)),
-      el('div', { class: 'actions' }, open, del),
+      el('div', { class: 'info' }, name, el('div', { class: 'sub' }, host)),
+      hasAccess ? el('div', { class: 'actions' }, test, open, del) : el('div', { class: 'actions' }, authorize, del),
       el('label', { class: 'switch', title: 'Activer pour ce site' }, toggle, el('span'))
     ),
-    el('details', {}, el('summary', {}, `${n} étape${n > 1 ? 's' : ''}`), steps)
+    details
   );
 }
 
 $('#global').addEventListener('change', (e) => chrome.storage.local.set({ enabled: e.target.checked }));
 
+// La demande d'accès doit partir directement du clic : on utilise l'onglet déjà connu.
 $('#record').addEventListener('click', async () => {
-  const tab = await activeTab();
+  const tab = currentTab;
   const u = new URL(tab.url);
+  if (!(await chrome.permissions.request({ origins: originsFor(u.origin) }))) {
+    $('#hint').textContent = 'Accès refusé : impossible d’enregistrer sans autoriser le site.';
+    return;
+  }
   await chrome.storage.local.set({
     recording: { tabId: tab.id, startUrl: u.origin + u.pathname, name: u.hostname.replace(/^www\./, ''), steps: [], startedAt: Date.now() },
   });
-  await chrome.tabs.reload(tab.id); // repart d'une page propre : Bitwarden remplira à nouveau, l'enregistreur s'affiche
+  await chrome.runtime.sendMessage({ type: 'sync' }); // injecte l'enregistreur avant le rechargement
+  await chrome.tabs.reload(tab.id); // repart d'une page propre : Bitwarden remplira à nouveau
+  window.close();
+});
+
+$('#continue').addEventListener('click', async () => {
+  const tab = currentTab;
+  if (!(await chrome.permissions.request({ origins: originsFor(new URL(tab.url).origin) }))) return;
+  await chrome.runtime.sendMessage({ type: 'sync' });
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+  window.close();
+});
+
+$('#backup').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('backup/backup.html') });
   window.close();
 });
 

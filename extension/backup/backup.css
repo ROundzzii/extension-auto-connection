@@ -1,0 +1,10 @@
+body { width: auto; max-width: 520px; margin: 48px auto; padding: 0 20px; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+h2 { font-size: 14px; margin: 0 0 6px; }
+.intro { color: var(--muted); margin: 0 0 24px; }
+section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+section p { margin: 0 0 10px; color: var(--muted); }
+.primary { width: auto; padding: 8px 16px; }
+.msg { padding: 10px 12px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); }
+.msg.err { border-color: var(--danger); color: var(--danger); }
+.msg[hidden] { display: none; }

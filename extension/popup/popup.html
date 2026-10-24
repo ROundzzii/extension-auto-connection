@@ -19,6 +19,11 @@
     <button id="cancel-rec" class="link">Annuler</button>
   </div>
 
+  <div id="hop" class="banner" hidden>
+    <span>Nouveau domaine : autorise-le pour continuer l’enregistrement.</span>
+    <button id="continue" class="link">Continuer ici</button>
+  </div>
+
   <main>
     <ul id="list"></ul>
     <p id="empty" class="empty" hidden>
@@ -31,8 +36,10 @@
     <button id="record" class="primary">＋ Enregistrer une connexion</button>
     <p id="hint" class="hint"></p>
     <p id="last" class="last" hidden></p>
+    <button id="backup" class="link tools">Sauvegarde : exporter / importer</button>
   </footer>
 
+  <script src="../shared.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
